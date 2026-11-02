@@ -12,7 +12,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Unity-2022.3_tested-black?style=flat&logo=unity&logoColor=white" alt="Unity 2022.3 tested" />
-  <img src="https://img.shields.io/badge/ZLua-1.1.0-blue?style=flat" alt="ZLua 1.1.0" />
+  <a href="https://github.com/focus-creative-games/zlua"><img src="https://img.shields.io/badge/ZLua-1.1.0-blue?style=flat" alt="ZLua 1.1.0" /></a>
   <img src="https://img.shields.io/badge/MCP-JSON--RPC-6A5ACD?style=flat" alt="MCP JSON-RPC" />
 </p>
 
@@ -20,7 +20,7 @@
 
 ---
 
-This project adapts [PuerTS Unity MCP](https://github.com/killop/puerts-unity-mcp) to ZLua. Its endpoint and tool model is retained, while the scripting engine and project script tools use Lua. The root `Packages` directory contains three independent Unity packages:
+Unity MCP uses [ZLua](https://github.com/focus-creative-games/zlua) for Lua execution in Unity Editor, Play Mode, and Players. The root `Packages` directory contains three independent Unity packages:
 
 | Directory | Package name | Responsibility |
 |---|---|---|
@@ -28,7 +28,11 @@ This project adapts [PuerTS Unity MCP](https://github.com/killop/puerts-unity-mc
 | `Packages/unity-mcp-zlua-extension` | `unity-mcp-zlua-extension` | ZLua host, Lua eval, and project Lua module execution |
 | `Packages/com.code-philosophy.zlua` | `com.code-philosophy.zlua` | Unmodified official ZLua source and native plugins |
 
-`unity-mcp` calls the scripting extension through `IUnityMcpScriptHost`. The official ZLua copy is pinned to [revision `ad05c9af`](docs/zlua-upstream.md), so it can be updated independently.
+## ZLua upstream
+
+[focus-creative-games/zlua](https://github.com/focus-creative-games/zlua) is the official ZLua project. It provides the Unity Lua runtime, native plugins, C# interop, and the platform workflow for Player builds. Its package is copied into `Packages/com.code-philosophy.zlua` without source changes at [revision `ad05c9af`](docs/zlua-upstream.md).
+
+`unity-mcp-zlua-extension` connects the MCP scripting interface to ZLua's `LuaAppDomain`. `unity-mcp` calls that extension through `IUnityMcpScriptHost`. Lua accesses public C# types through `CSharp['AssemblyName']['Namespace.Type']`; the [official ZLua README](https://github.com/focus-creative-games/zlua/blob/main/README_EN.md) and [demo](https://github.com/focus-creative-games/zlua-demo) cover ZLua itself. This repository adds MCP endpoints and tools around it.
 
 ## Features
 
@@ -117,7 +121,7 @@ The Runtime MCP host starts in Play Mode or a Player when `runtimeAutoStart` is 
 }
 ```
 
-Follow the [official ZLua package](Packages/com.code-philosophy.zlua/README_EN.md) for native runtime and IL2CPP code generation on the chosen target. This repository does not include the former PuerTS build helper scripts. Android/iOS IL2CPP execution has not yet been verified by this repository's Editor test suite.
+Follow the [official ZLua package](https://github.com/focus-creative-games/zlua) for native runtime and IL2CPP code generation on the chosen target. Android/iOS IL2CPP execution has not yet been verified by this repository's Editor test suite.
 
 The Player endpoint exposes `GET /health` and `POST /mcp`. An agent can connect without opening the Unity Editor:
 
@@ -364,7 +368,7 @@ unity-mcp/
 
 ## Tests And Updating ZLua
 
-Unity 2022.3.60f1 EditMode tests passed: 42 migrated protocol/configuration/storage tests and 5 Lua-to-C# interop tests. Six original PuerTS-specific tests were retired. These tests cover Editor Mono; Player IL2CPP, overloads, generics, `ref/out`, and events remain unverified by this suite.
+Unity 2022.3.60f1 EditMode tests passed: 42 protocol/configuration/storage tests and 5 Lua-to-C# interop tests. These tests cover Editor Mono; Player IL2CPP, overloads, generics, `ref/out`, and events remain unverified by this suite.
 
 ```text
 node Tools/run-editor-tests.mjs path/to/UnityProject
@@ -383,4 +387,4 @@ node Tools/update-zlua.mjs --source path/to/zlua-checkout
 
 ## License
 
-Unity MCP is released under the [MIT License](LICENSE). It was adapted from [killop/puerts-unity-mcp](https://github.com/killop/puerts-unity-mcp) revision `6372926e61d7b6db2eae1c0a92d92acd15b860a0`. The official ZLua package retains its [upstream MIT license](Packages/com.code-philosophy.zlua/LICENSE).
+Unity MCP is released under the [MIT License](LICENSE). The official [ZLua](https://github.com/focus-creative-games/zlua) package retains its [upstream MIT license](Packages/com.code-philosophy.zlua/LICENSE).

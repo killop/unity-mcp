@@ -12,7 +12,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Unity-2022.3_tested-black?style=flat&logo=unity&logoColor=white" alt="已在 Unity 2022.3 测试" />
-  <img src="https://img.shields.io/badge/ZLua-1.1.0-blue?style=flat" alt="ZLua 1.1.0" />
+  <a href="https://github.com/focus-creative-games/zlua"><img src="https://img.shields.io/badge/ZLua-1.1.0-blue?style=flat" alt="ZLua 1.1.0" /></a>
   <img src="https://img.shields.io/badge/MCP-JSON--RPC-6A5ACD?style=flat" alt="MCP JSON-RPC" />
 </p>
 
@@ -20,7 +20,7 @@
 
 ---
 
-本项目基于 [PuerTS Unity MCP](https://github.com/killop/puerts-unity-mcp) 改造。端点和工具模型沿用原项目，脚本引擎与项目脚本工具改为 ZLua。根目录 `Packages` 下有三个独立的 Unity package：
+Unity MCP 使用 [ZLua](https://github.com/focus-creative-games/zlua) 在 Unity Editor、Play Mode 和 Player 中执行 Lua。根目录 `Packages` 下有三个独立的 Unity package：
 
 | 目录 | 包名 | 职责 |
 |---|---|---|
@@ -28,7 +28,11 @@
 | `Packages/unity-mcp-zlua-extension` | `unity-mcp-zlua-extension` | ZLua 宿主、Lua 动态执行、项目 Lua 模块执行 |
 | `Packages/com.code-philosophy.zlua` | `com.code-philosophy.zlua` | 原样复制的官方 ZLua 源码和原生插件 |
 
-`unity-mcp` 通过 `IUnityMcpScriptHost` 接口调用脚本扩展。官方 ZLua 副本固定在[提交 `ad05c9af`](docs/zlua-upstream.md)，方便独立更新。
+## ZLua 官方项目
+
+[focus-creative-games/zlua](https://github.com/focus-creative-games/zlua) 是 ZLua 官方仓库，提供 Unity Lua 运行时、原生插件、C# 互操作以及 Player 平台的构建流程。本仓库把官方包原样复制到 `Packages/com.code-philosophy.zlua`，对应[提交 `ad05c9af`](docs/zlua-upstream.md)。
+
+`unity-mcp-zlua-extension` 把 MCP 脚本接口接到 ZLua 的 `LuaAppDomain`，`unity-mcp` 则通过 `IUnityMcpScriptHost` 调用扩展。Lua 使用 `CSharp['程序集名']['命名空间.类型名']` 访问公开 C# 类型。ZLua 本身的用法见[官方 README](https://github.com/focus-creative-games/zlua/blob/main/README.md) 和[示例工程](https://github.com/focus-creative-games/zlua-demo)；本仓库在它之上提供 MCP 端点与工具。
 
 ## 功能特性
 
@@ -117,7 +121,7 @@ node path/to/unity-mcp/Packages/unity-mcp/Tools~/unity-mcp-stdio-proxy.js --conf
 }
 ```
 
-目标平台的原生运行时与 IL2CPP 代码生成按[官方 ZLua 包说明](Packages/com.code-philosophy.zlua/README.md)完成。本仓库没有旧 PuerTS 的构建辅助脚本。当前仓库的 Editor 测试尚未验证 Android/iOS 的 IL2CPP 执行。
+目标平台的原生运行时与 IL2CPP 代码生成按 [ZLua 官方仓库](https://github.com/focus-creative-games/zlua)的说明完成。当前仓库的 Editor 测试尚未验证 Android/iOS 的 IL2CPP 执行。
 
 Player 端点提供 `GET /health` 和 `POST /mcp`。Agent 不打开 Unity Editor 也能直接连接手机：
 
@@ -364,7 +368,7 @@ unity-mcp/
 
 ## 测试与更新 ZLua
 
-Unity 2022.3.60f1 EditMode 下，迁移后的 42 个协议、配置和存储测试以及 5 个 Lua 调用 C# 的测试全部通过。原项目中 6 个只验证 PuerTS 的测试已经退役。这组测试覆盖 Editor Mono；Player IL2CPP、重载、泛型、`ref/out` 和事件尚未验证。
+Unity 2022.3.60f1 EditMode 下，42 个协议、配置和存储测试以及 5 个 Lua 调用 C# 的测试全部通过。这组测试覆盖 Editor Mono；Player IL2CPP、重载、泛型、`ref/out` 和事件尚未验证。
 
 ```text
 node Tools/run-editor-tests.mjs path/to/UnityProject
@@ -383,4 +387,4 @@ node Tools/update-zlua.mjs --source path/to/zlua-checkout
 
 ## 开源协议
 
-Unity MCP 使用 [MIT License](LICENSE)。MCP 代码改造自 [killop/puerts-unity-mcp](https://github.com/killop/puerts-unity-mcp) 提交 `6372926e61d7b6db2eae1c0a92d92acd15b860a0`。官方 ZLua 包保留其[上游 MIT 许可证](Packages/com.code-philosophy.zlua/LICENSE)。
+Unity MCP 使用 [MIT License](LICENSE)。[ZLua 官方包](https://github.com/focus-creative-games/zlua)保留其[上游 MIT 许可证](Packages/com.code-philosophy.zlua/LICENSE)。
