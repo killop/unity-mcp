@@ -12,7 +12,7 @@ The proxy discovers project extension tools and skills from `<UnityProject>/unit
 
 ## Script tools
 
-Use `editor.lua.eval` for Editor automation and `runtime.lua.eval` for Play Mode or Player automation. Lua can access C# through `CSharp['UnityEngine.CoreModule']['UnityEngine.Application']` or `CSharp['UnityEditor']['UnityEditor.EditorApplication']`. For a direct static C# call, use the endpoint's `*.reflection.invoke` tool. Return JSON-compatible Lua values from eval.
+Use `editor.lua.eval` for Editor automation and `runtime.lua.eval` for Play Mode or Player automation. Lua can access C# through `CSharp['UnityEngine.CoreModule']['UnityEngine.Application']`. On the Runtime endpoint, `runtime.reflection.invoke` also supports direct static C# calls. Return JSON-compatible Lua values from eval.
 
 Project Lua tools are manifest and module pairs in `unity-mcp-extension/lua/editor` or `lua/runtime`:
 
@@ -34,6 +34,6 @@ return {
 }
 ```
 
-Use the Unity menu **Unity MCP → Create Extension Demos** to copy examples without overwriting project files. Project authoring notes can be put in `unity-mcp-extension/skills/*.md`.
+Use the Unity menu **Unity MCP > Create Extension Demos** to copy examples without overwriting project files. Project authoring notes can be put in `unity-mcp-extension/skills/*.md`.
 
 The ZLua package owns one Lua app domain shared by MCP Editor and Play Mode hosts. The extension initializes it on first Lua call. A project that already initializes `LuaAppDomain` needs to coordinate its module loader with this extension.
