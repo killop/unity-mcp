@@ -1,0 +1,250 @@
+// Copyright 2026 Code Philosophy
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#include "FastMetatable.h"
+
+#if ZLUA_FAST_METATABLE
+
+#include "InstanceTarget.h"
+#include "TypeRegistry.h"
+
+#include "../LuaConsts.h"
+#include "../bridge/PropertyBridge.h"
+#include "../utils/LuaUtil.h"
+#include "../utils/LuaMetadataAlloc.h"
+
+extern "C"
+{
+#include "lua/zlua_fastmt.h"
+}
+
+namespace zlua
+{
+
+FastMemberCtx* FastMetatable::AllocCtx(TypeBinding* binding, FastInstanceKind kind, const MetaInfo& info)
+{
+    (void)binding;
+    FastMemberCtx* ctx = LuaMetadataAlloc::MallocAnyZeroed<FastMemberCtx>();
+    ctx->kind = kind;
+    ctx->info = info;
+    return ctx;
+}
+
+static void* ResolveFieldAddress(lua_State* L, int index, const FastMemberCtx* ctx)
+{
+    const FieldMarshalCtx* field = ctx->info.field;
+    switch (ctx->kind)
+    {
+    case FastInstanceKind::StructByVal:
+        return InstanceTarget::ResolveByValFieldAddress(L, index, field->instanceOffsetIncludingHeader - (int32_t)sizeof(Il2CppObject));
+    case FastInstanceKind::StructByObj:
+    case FastInstanceKind::ReferenceByObj:
+        return InstanceTarget::ResolveByObjFieldAddress(L, index, field->instanceOffsetIncludingHeader);
+    case FastInstanceKind::Static:
+        return field->staticAddress;
+    default:
+        IL2CPP_ASSERT(false);
+        return nullptr;
+    }
+}
+
+static void* ResolvePropertyTarget(lua_State* L, int index, FastInstanceKind kind)
+{
+    switch (kind)
+    {
+    case FastInstanceKind::Static:
+        return nullptr;
+    case FastInstanceKind::StructByVal:
+        return InstanceTarget::ResolveByValMethodTarget(L, index);
+    case FastInstanceKind::StructByObj:
+        return InstanceTarget::ResolveByObjValueTypeMethodTarget(L, index);
+    case FastInstanceKind::ReferenceByObj:
+        return InstanceTarget::ResolveByObjReferenceMethodTarget(L, index);
+    default:
+        IL2CPP_ASSERT(false);
+        return nullptr;
+    }
+}
+
+} // namespace zlua
+
+extern "C" LUA_API int zlua_index_getter(lua_State* L)
+{
+    using namespace zlua;
+    const FastMemberCtx* ctx = (const FastMemberCtx*)lua_touserdata(L, lua_upvalueindex(1));
+    IL2CPP_ASSERT(ctx != nullptr);
+
+    switch (ctx->info.kind)
+    {
+    case MetaKind::Field:
+    {
+        const FieldMarshalCtx* field = ctx->info.field;
+        const MarshalMetaInfo* meta = field->meta;
+        FnMarshalCs2Lua writer = meta->cs2luaWriter;
+        if (writer == nullptr)
+            return luaL_error(L, "zlua: field is write-only");
+        void* fieldPtr = ResolveFieldAddress(L, 1, ctx);
+        IL2CPP_ASSERT(fieldPtr != nullptr);
+        writer(L, fieldPtr, meta);
+        return 1;
+    }
+    case MetaKind::Property:
+    {
+        const PropertyMarshalCtx* property = ctx->info.property;
+        FnPropertyGetter getter = property->getter;
+        if (getter == nullptr)
+            return luaL_error(L, "zlua: property has no getter");
+        void* target = ResolvePropertyTarget(L, 1, ctx->kind);
+        PropertyBridge::InvokeGetter(L, target, property);
+        return 1;
+    }
+    default:
+        return luaL_error(L, "zlua: invalid index getter");
+    }
+}
+
+extern "C" LUA_API int zlua_index_setter(lua_State* L)
+{
+    using namespace zlua;
+    const FastMemberCtx* ctx = (const FastMemberCtx*)lua_touserdata(L, lua_upvalueindex(1));
+    IL2CPP_ASSERT(ctx != nullptr);
+
+    switch (ctx->info.kind)
+    {
+    case MetaKind::Field:
+    {
+        const FieldMarshalCtx* field = ctx->info.field;
+        const MarshalMetaInfo* meta = field->meta;
+        FnMarshalLua2Cs writer = meta->lua2csWriter;
+        if (writer == nullptr)
+            return luaL_error(L, "zlua: field is read-only");
+        void* fieldPtr = ResolveFieldAddress(L, 1, ctx);
+        IL2CPP_ASSERT(fieldPtr != nullptr);
+        writer(L, 2, fieldPtr, meta->needsWriteBarrier, meta);
+        return 0;
+    }
+    case MetaKind::Property:
+    {
+        const PropertyMarshalCtx* property = ctx->info.property;
+        FnPropertySetter setter = property->setter;
+        if (setter == nullptr)
+            return luaL_error(L, "zlua: property is read-only");
+        void* target = ResolvePropertyTarget(L, 1, ctx->kind);
+        PropertyBridge::InvokeSetter(L, target, 2, property);
+        return 0;
+    }
+    default:
+        return luaL_error(L, "zlua: invalid index setter");
+    }
+}
+
+namespace zlua
+{
+
+void FastMetatable::FillMemberTables(lua_State* L, TypeBinding* binding, const NameMetaMap* map, FastInstanceKind kind, int memberTableIndex,
+                                     int setterTableIndex)
+{
+    for (NameMetaMap::const_iterator it = map->begin(); it != map->end(); ++it)
+    {
+        const char* name = it->first;
+        const MetaInfo& info = it->second;
+        switch (info.kind)
+        {
+        case MetaKind::Method:
+            LuaUtil::PushRef(L, info.closureRef);
+            lua_setfield(L, memberTableIndex, name);
+            break;
+        case MetaKind::Field:
+        case MetaKind::Property:
+        {
+            const bool hasSetter = (info.kind == MetaKind::Field) ? (info.field->meta != nullptr && info.field->meta->lua2csWriter != nullptr)
+                                                                  : (info.property->setter != nullptr);
+            /* Always install getter so write-only members error like Dispatch* (not silent nil). */
+            FastMemberCtx* ctx = AllocCtx(binding, kind, info);
+            lua_pushlightuserdata(L, ctx);
+            lua_pushcclosure(L, zlua_index_getter, 1);
+            lua_setfield(L, memberTableIndex, name);
+            if (hasSetter)
+            {
+                lua_pushlightuserdata(L, ctx);
+                lua_pushcclosure(L, zlua_index_setter, 1);
+                lua_setfield(L, setterTableIndex, name);
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
+void FastMetatable::SealMetatable(lua_State* L, int mtIndex)
+{
+    zlua_mt_seal(L, mtIndex);
+}
+
+void FastMetatable::RawSetMethodOnIndexTable(lua_State* L, Il2CppClass* klass, bool isStatic, bool isByVal, const char* aliasName, int closureStackIndex)
+{
+    IL2CPP_ASSERT(klass != nullptr);
+    IL2CPP_ASSERT(aliasName != nullptr);
+    const int top = lua_gettop(L);
+    closureStackIndex = lua_absindex(L, closureStackIndex);
+
+    TypeRegistry::PushInternedTypeTable(L, klass);
+    const int typeTableIndex = lua_gettop(L);
+
+    if (isStatic)
+    {
+        if (lua_getmetatable(L, typeTableIndex) == 0)
+        {
+            lua_settop(L, top);
+            return;
+        }
+    }
+    else
+    {
+        lua_pushstring(L, isByVal ? LuaConsts::ByValInstanceMt : LuaConsts::ByObjInstanceMt);
+        lua_rawget(L, typeTableIndex);
+        if (!lua_istable(L, -1))
+        {
+            lua_settop(L, top);
+            return;
+        }
+    }
+    const int mtIndex = lua_gettop(L);
+
+    lua_getfield(L, mtIndex, LuaConsts::MetaIndex);
+    if (!lua_istable(L, -1))
+    {
+        lua_settop(L, top);
+        return;
+    }
+    const int memberTableIndex = lua_gettop(L);
+
+    lua_pushstring(L, aliasName);
+    lua_pushvalue(L, closureStackIndex);
+    lua_rawset(L, memberTableIndex);
+
+    lua_settop(L, top);
+}
+
+} // namespace zlua
+
+#endif /* ZLUA_FAST_METATABLE */

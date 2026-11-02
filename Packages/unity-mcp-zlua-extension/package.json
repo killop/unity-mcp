@@ -1,0 +1,12 @@
+{
+  "name": "unity-mcp-zlua-extension",
+  "displayName": "Unity MCP ZLua Extension",
+  "version": "0.1.0",
+  "unity": "2021.3",
+  "description": "ZLua scripting host and Lua tools for Unity MCP.",
+  "license": "MIT",
+  "dependencies": {
+    "unity-mcp": "0.1.0",
+    "com.code-philosophy.zlua": "1.1.0"
+  }
+}

@@ -1,0 +1,125 @@
+// Copyright 2026 Code Philosophy
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#pragma once
+#include <unordered_map>
+
+#include "../utils/CsStringHash.h"
+#include "../bridge/PropertyBridge.h"
+#include "../bridge/FieldBridge.h"
+#include "../marshal/TypedMarshal.h"
+#include "../marshal/MarshalDefs.h"
+#include "../marshal/MarshalMeta.h"
+
+#include "../utils/dynamic_array.h"
+
+struct Il2CppClass;
+
+namespace zlua
+{
+enum class MetaKind : uint8_t
+{
+    Method,
+    Field,
+    Property,
+    // Event,
+};
+
+/// Compact tagged entry for NameMetaMap. Field/Property payloads live on LuaMetadataAlloc.
+struct MetaInfo
+{
+    union
+    {
+        int closureRef; // Method
+        FieldMarshalCtx* field;
+        PropertyMarshalCtx* property;
+    };
+    MetaKind kind;
+};
+
+typedef std::unordered_map<const char*, MetaInfo, CsStringHash, CsStringEqual> NameMetaMap;
+
+#if ZLUA_FAST_METATABLE
+/* Resolve this / field address strategy for tagged getters/setters (OPTIMIZATION.md). */
+enum class FastInstanceKind : uint8_t
+{
+    Static = 0,
+    StructByVal,
+    StructByObj,
+    ReferenceByObj,
+};
+
+/// Slim ctx for lightuserdata upvalues. Field/Property point at the same heap ctx as NameMetaMap.
+struct FastMemberCtx
+{
+    MetaInfo info;
+    FastInstanceKind kind;
+};
+#endif
+
+struct TypeBinding
+{
+    Il2CppClass* klass;
+    mutable NameMetaMap byobjInstanceMap;
+    mutable NameMetaMap byvalInstanceMap;
+    mutable NameMetaMap staticMap;
+    const MethodMarshalCtx* uniqueCtorMethod;
+    const MethodGroups* ctorGroups;
+};
+
+enum class ClosureKind
+{
+    Unknown,
+    Direct,
+    Indirect,
+    DirectGeneric,
+    Gtap, // short-name wrapper: try GTAP open-generic inflate, then optional non-generic fallback
+};
+
+class MetaBinding
+{
+  public:
+    static TypeBinding* EnsureBinding(lua_State* L, Il2CppClass* klass);
+    static MethodMarshalCtx* CreateMethodMarshalCtx(lua_State* L, const MethodInfo* method, bool isByVal);
+    static int CreateDirectMethodClosureRef(lua_State* L, const MethodInfo* method, const TypeBinding* binding, bool isStatic, bool isByVal);
+    // static int PushMethodClosure(lua_State* L, const MethodInfo* method, bool isStatic);
+    static bool IsDirectMethodClosure(lua_State* L, int closureStackIndex);
+    static const MethodMarshalCtx* GetMethodMarshalCtxFromClosure(lua_State* L, int closureStackIndex);
+    static const TypeBinding* GetTypeBindingFromClosure(lua_State* L, int closureStackIndex);
+    /// Find an open generic method for <c>zlua.inflate</c> by short name or §3.7 open-signature key.
+    static bool TryFindOpenGenericMethod(lua_State* L, Il2CppClass* ownerKlass, const char* nameOrSignature, int genericArity,
+                                         const MethodInfo** outMethod, bool* outIsStatic, bool* outIsByVal);
+    /// Intern closed generic method closure (shared by inflate / GTAP). Constraints must already hold.
+    static int InternClosedGenericMethod(lua_State* L, const MethodInfo* openMethod, const TypeBinding* binding, bool isStatic, bool isByVal,
+                                         const Il2CppType* const* typeArgs, uint32_t typeArgCount);
+    /// §3.7 full-signature miss: find first matching public method (no ctor/cctor), cache, push closure. Returns 1 or 0.
+    static int TryResolveSignatureMethodAndPush(lua_State* L, TypeBinding* binding, const char* signatureKey, bool isStatic, bool isByVal);
+    /// Drop TypeBindings that embed state-local method closure registry refs so EnsureBinding
+    /// rebuilds closures for the next lua_State. Call from LuaEnv::Shutdown (Reset path).
+    ///
+    /// Intentionally does **not** clear process-level caches keyed by MethodInfo* /
+    /// Il2Cpp metadata (s_methodMarshalShared, Field/Property/MethodMarshalCtx, etc.): those
+    /// live in LuaMetadataAlloc and survive Reset (spec: process-level Bridge / binding tables
+    /// are kept). There is no Free for that pool; memory is released only on process
+    /// LuaMetadataAlloc::Shutdown. Clearing the maps without freeing the pool would only
+    /// lose reuse and force re-allocation into the same bump arena.
+    static void ShutdownState();
+};
+} // namespace zlua

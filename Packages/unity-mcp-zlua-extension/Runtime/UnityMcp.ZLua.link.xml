@@ -1,0 +1,5 @@
+<linker>
+  <assembly fullname="UnityMcp.ZLua" preserve="all" ignoreIfMissing="1" />
+  <assembly fullname="ZLua.Common" preserve="all" ignoreIfMissing="1" />
+  <assembly fullname="ZLua.Il2Cpp" preserve="all" ignoreIfMissing="1" />
+</linker>

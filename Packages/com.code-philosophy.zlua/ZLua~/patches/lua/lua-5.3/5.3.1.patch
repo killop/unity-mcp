@@ -1,0 +1,426 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: zlua-regen <zlua@code-philosophy.com>
+Date: Sat, 15 Aug 2026 09:50:00 +0800
+Subject: [PATCH] FastMT raw-first gettable for lua-5.3.1
+
+diff -ruN a/src/lapi.c b/src/lapi.c
+--- a/src/lapi.c	2015-04-06 20:23:48.000000000 +0800
++++ b/src/lapi.c	2026-08-15 09:46:23.293578100 +0800
+@@ -84,6 +84,16 @@
+ }
+ 
+ 
++
++#if ZLUA_FAST_METATABLE
++/*
++** Expose index2addr to zlua_fastmt.c without duplicating the implementation.
++*/
++TValue *zlua_index2value (lua_State *L, int idx) {
++  return index2addr(L, idx);
++}
++#endif
++
+ /*
+ ** to be called by 'lua_checkstack' in protected mode, to grow stack
+ ** capturing memory errors
+diff -ruN a/src/lgc.c b/src/lgc.c
+--- a/src/lgc.c	2015-03-25 21:42:19.000000000 +0800
++++ b/src/lgc.c	2026-08-15 09:46:23.312468100 +0800
+@@ -447,6 +447,12 @@
+   const char *weakkey, *weakvalue;
+   const TValue *mode = gfasttm(g, h->metatable, TM_MODE);
+   markobjectN(g, h->metatable);
++#if ZLUA_FAST_METATABLE
++  if (h->zlua_mt_kind != 0) {
++    markvalue(g, &h->zlua_index);
++    markvalue(g, &h->zlua_newindex);
++  }
++#endif
+   if (mode && ttisstring(mode) &&  /* is there a weak mode? */
+       ((weakkey = strchr(svalue(mode), 'k')),
+        (weakvalue = strchr(svalue(mode), 'v')),
+diff -ruN a/src/llimits.h b/src/llimits.h
+--- a/src/llimits.h	2015-06-09 22:21:00.000000000 +0800
++++ b/src/llimits.h	2026-08-15 09:46:23.327908900 +0800
+@@ -293,6 +293,43 @@
+ 
+ 
+ 
++
++/*
++** The luai_num* macros define the primitive operations over numbers.
++** Lua 5.3.0 originally defined these only in luaconf.h under LUA_CORE;
++** Unity Il2Cpp may include luaconf.h before LUA_CORE is set (include-guard),
++** so provide 5.3.6-style fallbacks here (same as PUC-Rio 5.3.6 llimits.h).
++** Do not #include <math.h> here - it poisons C++ Il2Cpp TUs. Files that
++** expand l_mathop(fmod/pow/floor) must include math.h themselves (lobject.c).
++*/
++#if !defined(luai_numidiv)
++#define luai_numidiv(L,a,b)     ((void)L, l_floor(luai_numdiv(L,a,b)))
++#endif
++
++#if !defined(luai_numdiv)
++#define luai_numdiv(L,a,b)      ((a)/(b))
++#endif
++
++#if !defined(luai_nummod)
++#define luai_nummod(L,a,b,m)  \
++  { (m) = l_mathop(fmod)(a,b); if ((m)*(b) < 0) (m) += (b); }
++#endif
++
++#if !defined(luai_numpow)
++#define luai_numpow(L,a,b)      ((void)L, l_mathop(pow)(a,b))
++#endif
++
++#if !defined(luai_numadd)
++#define luai_numadd(L,a,b)      ((a)+(b))
++#define luai_numsub(L,a,b)      ((a)-(b))
++#define luai_nummul(L,a,b)      ((a)*(b))
++#define luai_numunm(L,a)        (-(a))
++#define luai_numeq(a,b)         ((a)==(b))
++#define luai_numlt(a,b)         ((a)<(b))
++#define luai_numle(a,b)         ((a)<=(b))
++#define luai_numisnan(a)        (!luai_numeq((a), (a)))
++#endif
++
+ /*
+ ** macro to control inclusion of some hard tests on stack reallocation
+ */
+diff -ruN a/src/lobject.h b/src/lobject.h
+--- a/src/lobject.h	2015-06-09 22:21:42.000000000 +0800
++++ b/src/lobject.h	2026-08-15 09:46:23.347775800 +0800
+@@ -502,12 +502,19 @@
+   CommonHeader;
+   lu_byte flags;  /* 1<<p means tagmethod(p) is not present */
+   lu_byte lsizenode;  /* log2 of size of 'node' array */
++#if ZLUA_FAST_METATABLE
++  lu_byte zlua_mt_kind;  /* 0 = normal; non-0 = ZLua sealed IMT/SMT */
++#endif
+   unsigned int sizearray;  /* size of 'array' array */
+   TValue *array;  /* array part */
+   Node *node;
+   Node *lastfree;  /* any free position is before this position */
+   struct Table *metatable;
+   GCObject *gclist;
++#if ZLUA_FAST_METATABLE
++  TValue zlua_index;     /* cached __index (table) */
++  TValue zlua_newindex;  /* cached __newindex (table) */
++#endif
+ } Table;
+ 
+ 
+diff -ruN a/src/ltable.c b/src/ltable.c
+--- a/src/ltable.c	2015-06-09 22:21:13.000000000 +0800
++++ b/src/ltable.c	2026-08-15 09:46:23.370580600 +0800
+@@ -414,6 +414,11 @@
+   t->array = NULL;
+   t->sizearray = 0;
+   setnodevector(L, t, 0);
++#if ZLUA_FAST_METATABLE
++  t->zlua_mt_kind = 0;
++  setnilvalue(&t->zlua_index);
++  setnilvalue(&t->zlua_newindex);
++#endif
+   return t;
+ }
+ 
+diff -ruN a/src/luaconf.h b/src/luaconf.h
+--- a/src/luaconf.h	2015-05-21 01:39:23.000000000 +0800
++++ b/src/luaconf.h	2026-08-15 09:46:23.388482600 +0800
+@@ -742,6 +742,17 @@
+ ** without modifying the main part of the file.
+ */
+ 
++/*
++@@ ZLUA_FAST_METATABLE controls ZLua member-index optimization.
++** 0: legacy C __index/__newindex.
++** 1: sealed mt + member/setter tables + VM gettable/settable fast path.
++*/
++/* Default 1: raw-first gettable FastMT (same ordering as 5.1/5.2/5.3.0). */
++#if !defined(ZLUA_FAST_METATABLE)
++#define ZLUA_FAST_METATABLE 1
++#endif
++
++
+ 
+ 
+ 
+diff -ruN a/src/lvm.c b/src/lvm.c
+--- a/src/lvm.c	2015-06-09 23:53:35.000000000 +0800
++++ b/src/lvm.c	2026-08-15 09:47:05.287871600 +0800
+@@ -29,6 +29,7 @@
+ #include "ltable.h"
+ #include "ltm.h"
+ #include "lvm.h"
++#include "zlua_fastmt.h"
+ 
+ 
+ /* limit for table tag-method chains (to avoid loops) */
+@@ -169,9 +170,102 @@
+         return;
+       }
+       /* else will try metamethod */
++#if ZLUA_FAST_METATABLE
++      /* After raw miss: sealed SMT (often setmetatable(T,T)) serves memberTable. */
++      if (h->metatable != NULL && h->metatable->zlua_mt_kind != 0) {
++        Table *mt = h->metatable;
++        Table *idx = hvalue(&mt->zlua_index);
++        const TValue *slotv = luaH_get(idx, key);
++        if (!ttisnil(slotv)) {
++          if (zlua_is_getter(slotv))
++            zlua_vm_call_getter(L, slotv, t, val);
++          else
++            setobj2s(L, val, slotv);
++          return;
++        }
++        /* Static type table: extras such as _default live on SMT itself. */
++        {
++          const TValue *extra = luaH_get(mt, key);
++          if (!ttisnil(extra)) {
++            setobj2s(L, val, extra);
++            return;
++          }
++        }
++        /* Reserved keys (__byval_instance_mt, __nameof, ...) stay nil when absent. */
++        if (ttisstring(key)) {
++          TString *ks = tsvalue(key);
++          const char *s = getstr(ks);
++          if (s[0] == '_' && s[1] == '_') {
++            setnilvalue(val);
++            return;
++          }
++        }
++        /* memberTable.__index: lazy §3.7 full-signature resolve (seal bypasses normal mt). */
++        {
++          const TValue *idx_tm = fasttm(L, idx->metatable, TM_INDEX);
++          if (idx_tm != NULL && ttisfunction(idx_tm)) {
++            TValue idxtv;
++            sethvalue(L, &idxtv, idx);
++            luaT_callTM(L, idx_tm, &idxtv, key, val, 1);
++            if (!ttisnil(val))
++              return;
++          }
++        }
++        {
++          const TValue *tn = luaH_getstr(mt, luaS_newliteral(L, "__zlua_typename"));
++          const char *typeName = (tn != NULL && !ttisnil(tn) && ttisstring(tn))
++                                     ? getstr(tsvalue(tn)) : "?";
++          const char *memberName = ttisstring(key) ? getstr(tsvalue(key)) : "?";
++          luaG_runerror(L, "zlua: member not found: %s.%s", typeName, memberName);
++        }
++      }
++#endif
+     }
+     else if (ttisnil(tm = luaT_gettmbyobj(L, t, TM_INDEX)))
+       luaG_typeerror(L, t, "index");  /* no metamethod */
++#if ZLUA_FAST_METATABLE
++    else if (ttisfulluserdata(t)) {
++      Table *mt = uvalue(t)->metatable;
++      if (mt != NULL && mt->zlua_mt_kind != 0) {
++        Table *idx = hvalue(&mt->zlua_index);
++        const TValue *slotv = luaH_get(idx, key);
++        if (!ttisnil(slotv)) {
++          if (zlua_is_getter(slotv))
++            zlua_vm_call_getter(L, slotv, t, val);
++          else
++            setobj2s(L, val, slotv);
++          return;
++        }
++        /* Reserved keys (__byval_instance_mt, __nameof, ...) stay nil when absent. */
++        if (ttisstring(key)) {
++          TString *ks = tsvalue(key);
++          const char *s = getstr(ks);
++          if (s[0] == '_' && s[1] == '_') {
++            setnilvalue(val);
++            return;
++          }
++        }
++        /* memberTable.__index: lazy §3.7 full-signature resolve (seal bypasses normal mt). */
++        {
++          const TValue *idx_tm = fasttm(L, idx->metatable, TM_INDEX);
++          if (idx_tm != NULL && ttisfunction(idx_tm)) {
++            TValue idxtv;
++            sethvalue(L, &idxtv, idx);
++            luaT_callTM(L, idx_tm, &idxtv, key, val, 1);
++            if (!ttisnil(val))
++              return;
++          }
++        }
++        {
++          const TValue *tn = luaH_getstr(mt, luaS_newliteral(L, "__zlua_typename"));
++          const char *typeName = (tn != NULL && !ttisnil(tn) && ttisstring(tn))
++                                     ? getstr(tsvalue(tn)) : "?";
++          const char *memberName = ttisstring(key) ? getstr(tsvalue(key)) : "?";
++          luaG_runerror(L, "zlua: member not found: %s.%s", typeName, memberName);
++        }
++      }
++    }
++#endif
+     if (ttisfunction(tm)) {  /* metamethod is a function */
+       luaT_callTM(L, tm, t, key, val, 1);
+       return;
+@@ -189,6 +283,47 @@
+ void luaV_settable (lua_State *L, const TValue *t, TValue *key, StkId val) {
+   int loop;  /* counter to avoid infinite loops */
+   for (loop = 0; loop < MAXTAGLOOP; loop++) {
++#if ZLUA_FAST_METATABLE
++    {
++      Table *mt = NULL;
++      if (ttisfulluserdata(t))
++        mt = uvalue(t)->metatable;
++      else if (ttistable(t))
++        mt = hvalue(t)->metatable;
++      if (mt != NULL && mt->zlua_mt_kind != 0) {
++        /* Sealed ZLua mt: allow in-place update of existing table keys, else setters. */
++        if (ttistable(t)) {
++          Table *h = hvalue(t);
++          TValue *oldval = cast(TValue *, luaH_get(h, key));
++          if (!ttisnil(oldval)) {
++            setobj2t(L, oldval, val);
++            luaC_barrierback(L, h, val);
++            return;
++          }
++        }
++        {
++          Table *setters = hvalue(&mt->zlua_newindex);
++          const TValue *slotv = luaH_get(setters, key);
++          if (!ttisnil(slotv) && zlua_is_setter(slotv)) {
++            zlua_vm_call_setter(L, slotv, t, val);
++            return;
++          }
++          {
++            /* idx lookup only on failure: distinguish read-only vs missing member. */
++            Table *idx = hvalue(&mt->zlua_index);
++            const TValue *idxv = luaH_get(idx, key);
++            const TValue *tn = luaH_getstr(mt, luaS_newliteral(L, "__zlua_typename"));
++            const char *typeName = (tn != NULL && !ttisnil(tn) && ttisstring(tn))
++                                       ? getstr(tsvalue(tn)) : "?";
++            const char *memberName = ttisstring(key) ? getstr(tsvalue(key)) : "?";
++            if (!ttisnil(idxv))
++              luaG_runerror(L, "zlua: property is read-only: %s.%s", typeName, memberName);
++            luaG_runerror(L, "zlua: member not writable: %s.%s", typeName, memberName);
++          }
++        }
++      }
++    }
++#endif
+     const TValue *tm;
+     if (ttistable(t)) {  /* 't' is a table? */
+       Table *h = hvalue(t);
+diff -ruN a/src/zlua_fastmt.c b/src/zlua_fastmt.c
+--- a/src/zlua_fastmt.c	1970-01-01 08:00:00.000000000 +0800
++++ b/src/zlua_fastmt.c	2026-08-15 09:46:23.420765800 +0800
+@@ -0,0 +1,77 @@
++/*
++** ZLua sealed-metatable support for PUC-Rio Lua 5.3.0 VM.
++*/
++#define LUA_CORE
++
++#include "lprefix.h"
++
++#include "lua.h"
++#include "lauxlib.h"
++
++#include "lapi.h"
++#include "ldo.h"
++#include "lfunc.h"
++#include "lgc.h"
++#include "lobject.h"
++#include "lstate.h"
++#include "ltable.h"
++#include "ltm.h"
++#include "zlua_fastmt.h"
++
++#if ZLUA_FAST_METATABLE
++
++TValue *zlua_index2value (lua_State *L, int idx);
++
++LUA_API void zlua_mt_seal (lua_State *L, int mtIndex) {
++  Table *mt;
++  const TValue *idx;
++  const TValue *nidx;
++  TValue *o;
++  lua_lock(L);
++  o = zlua_index2value(L, mtIndex);
++  api_check(L, ttistable(o), "table expected");
++  mt = hvalue(o);
++  idx = luaH_getstr(mt, G(L)->tmname[TM_INDEX]);
++  nidx = luaH_getstr(mt, G(L)->tmname[TM_NEWINDEX]);
++  if (ttisnil(idx) || !ttistable(idx)) {
++    lua_unlock(L);
++    luaL_error(L, "zlua_mt_seal: __index must be a table");
++  }
++  if (ttisnil(nidx) || !ttistable(nidx)) {
++    lua_unlock(L);
++    luaL_error(L, "zlua_mt_seal: __newindex must be a table");
++  }
++  setobj(L, &mt->zlua_index, idx);
++  setobj(L, &mt->zlua_newindex, nidx);
++  luaC_barrierback(L, mt, idx);
++  luaC_barrierback(L, mt, nidx);
++  mt->zlua_mt_kind = 1;
++  lua_unlock(L);
++}
++
++
++LUA_API void zlua_vm_call_getter (lua_State *L, const TValue *f,
++                                  const TValue *obj, StkId res) {
++  ptrdiff_t result = savestack(L, res);
++  StkId func = L->top;
++  setobj2s(L, func, f);
++  setobj2s(L, func + 1, obj);
++  L->top += 2;
++  /* 5.3.0: luaD_call(..., allowyield); no luaD_callnoyield */
++  luaD_call(L, func, 1, isLua(L->ci));
++  res = restorestack(L, result);
++  setobjs2s(L, res, --L->top);
++}
++
++
++LUA_API void zlua_vm_call_setter (lua_State *L, const TValue *f,
++                                  const TValue *obj, StkId val) {
++  StkId func = L->top;
++  setobj2s(L, func, f);
++  setobj2s(L, func + 1, obj);
++  setobj2s(L, func + 2, val);
++  L->top += 3;
++  luaD_call(L, func, 0, isLua(L->ci));
++}
++
++#endif /* ZLUA_FAST_METATABLE */
+diff -ruN a/src/zlua_fastmt.h b/src/zlua_fastmt.h
+--- a/src/zlua_fastmt.h	1970-01-01 08:00:00.000000000 +0800
++++ b/src/zlua_fastmt.h	2026-08-15 09:46:23.431738100 +0800
+@@ -0,0 +1,32 @@
++/*
++** ZLua sealed-metatable helpers for Lua 5.3.0 (gettable/settable VM).
++** Only active when ZLUA_FAST_METATABLE != 0 (defined in luaconf.h).
++*/
++#ifndef zlua_fastmt_h
++#define zlua_fastmt_h
++
++#include "luaconf.h"
++#include "lua.h"
++#include "lobject.h"
++
++#if ZLUA_FAST_METATABLE
++
++LUA_API int zlua_index_getter (lua_State *L);
++LUA_API int zlua_index_setter (lua_State *L);
++
++LUA_API void zlua_mt_seal (lua_State *L, int mtIndex);
++
++LUA_API void zlua_vm_call_getter (lua_State *L, const TValue *f,
++                                  const TValue *obj, StkId res);
++LUA_API void zlua_vm_call_setter (lua_State *L, const TValue *f,
++                                  const TValue *obj, StkId val);
++
++#define zlua_is_getter(o) \
++  (ttisCclosure(o) && clCvalue(o)->f == zlua_index_getter)
++
++#define zlua_is_setter(o) \
++  (ttisCclosure(o) && clCvalue(o)->f == zlua_index_setter)
++
++#endif /* ZLUA_FAST_METATABLE */
++
++#endif

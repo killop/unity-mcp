@@ -1,0 +1,17 @@
+{
+  "name": "UnityMcp.ZLua",
+  "rootNamespace": "UnityMcp.ZLua",
+  "references": [
+    "UnityMcp.Runtime",
+    "ZLua.Common"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

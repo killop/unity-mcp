@@ -1,0 +1,174 @@
+// Copyright 2026 Code Philosophy
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using UnityEditor;
+using UnityEditor.Build;
+using UnityEditor.Build.Reporting;
+using UnityEditor.UnityLinker;
+using UnityEngine;
+using ZLua;
+using ZLua.Utils;
+
+namespace ZLua.BuildProcessors
+{
+    internal class CopyStrippedAOTAssemblies : IPostprocessBuildWithReport, IPreprocessBuildWithReport
+    {
+
+        public int callbackOrder => 0;
+
+#if UNITY_2021_1_OR_NEWER
+        public static string GetStripAssembliesDir2021(BuildTarget target)
+        {
+            switch (target)
+            {
+                case BuildTarget.StandaloneWindows:
+                    case BuildTarget.StandaloneWindows64:
+                    return $"Library/Bee/artifacts/WinPlayerBuildProgram/ManagedStripped";
+                case BuildTarget.StandaloneLinux64:
+                    return $"Library/Bee/artifacts/LinuxPlayerBuildProgram/ManagedStripped";
+                case BuildTarget.WSAPlayer:
+                    return $"Library/Bee/artifacts/UWPPlayerBuildProgram/ManagedStripped";
+                case BuildTarget.Android:
+                    return $"Library/Bee/artifacts/Android/ManagedStripped";
+#if TUANJIE_2022_3_OR_NEWER
+                case BuildTarget.HMIAndroid:
+                    return $"Library/Bee/artifacts/HMIAndroid/ManagedStripped";
+#endif
+                case BuildTarget.iOS:
+#if UNITY_TVOS
+                case BuildTarget.tvOS:
+#endif
+                return $"Library/Bee/artifacts/iOS/ManagedStripped";
+#if UNITY_VISIONOS
+                case BuildTarget.VisionOS:
+#if UNITY_6000_0_OR_NEWER
+                return $"Library/Bee/artifacts/VisionOS/ManagedStripped";
+#else
+                return $"Library/Bee/artifacts/iOS/ManagedStripped";
+#endif
+#endif
+                case BuildTarget.WebGL:
+                    return $"Library/Bee/artifacts/WebGL/ManagedStripped";
+                case BuildTarget.StandaloneOSX:
+                    return $"Library/Bee/artifacts/MacStandalonePlayerBuildProgram/ManagedStripped";
+                case BuildTarget.PS4:
+                    return $"Library/Bee/artifacts/PS4PlayerBuildProgram/ManagedStripped";
+                case BuildTarget.PS5:
+                    return $"Library/Bee/artifacts/PS5PlayerBuildProgram/ManagedStripped";
+                case BuildTarget.GameCoreXboxOne:
+                case BuildTarget.GameCoreXboxSeries:
+                    return $"Library/Bee/artifacts/GameCorePlayerBuildProgram/ManagedStripped";
+#if UNITY_WEIXINMINIGAME
+                case BuildTarget.WeixinMiniGame:
+                    return $"Library/Bee/artifacts/WeixinMiniGame/ManagedStripped";
+#endif
+#if UNITY_OPENHARMONY
+                case BuildTarget.OpenHarmony:
+                    return $"Library/Bee/artifacts/OpenHarmonyPlayerBuildProgram/ManagedStripped";
+#endif
+                default: return "";
+            }
+        }
+#else
+        private string GetStripAssembliesDir2020(BuildTarget target)
+        {
+            string subPath = target == BuildTarget.Android ?
+                "assets/bin/Data/Managed" :
+                "Data/Managed/";
+            return $"Temp/StagingArea/{subPath}";
+        }
+
+        public void OnBeforeConvertRun(BuildReport report, Il2CppBuildPipelineData data)
+        {
+            BuildTarget target = report.summary.platform;
+            CopyStripDlls(GetStripAssembliesDir2020(target), target);
+        }
+#endif
+
+        public static void CopyStripDlls(string srcStripDllPath, BuildTarget target)
+        {
+            if (!Settings.Instance.enable)
+            {
+                Debug.Log($"[CopyStrippedAOTAssemblies] disabled");
+                return;
+            }
+            if (HybridCLRIntegration.Enabled)
+            {
+                Debug.Log($"[CopyStrippedAOTAssemblies] HybridCLR enabled, skip copy stripped dlls");
+                return;
+            }
+            Debug.Log($"[CopyStrippedAOTAssemblies] CopyScripDlls. src:{srcStripDllPath} target:{target}");
+
+            var dstPath = CommonPaths.GetManagedStrippedDuplicatePath(target);
+
+            Directory.CreateDirectory(dstPath);
+
+            foreach (var fileFullPath in Directory.GetFiles(srcStripDllPath, "*.dll"))
+            {
+                var file = Path.GetFileName(fileFullPath);
+                Debug.Log($"[CopyStrippedAOTAssemblies] copy strip dll {fileFullPath} ==> {dstPath}/{file}");
+                File.Copy($"{fileFullPath}", $"{dstPath}/{file}", true);
+            }
+        }
+
+        public void OnPostprocessBuild(BuildReport report)
+        {
+            if (!Settings.Instance.enable)
+            {
+                Debug.Log($"[CopyStrippedAOTAssemblies] disabled");
+                return;
+            }
+            if (HybridCLRIntegration.Enabled)
+            {
+                Debug.Log($"[CopyStrippedAOTAssemblies] HybridCLR enabled, skip copy stripped dlls");
+                return;
+            }
+            BuildTarget target = report.summary.platform;
+            string srcStripDllPath = GetStripAssembliesDir2021(target);
+            if (!string.IsNullOrEmpty(srcStripDllPath) && Directory.Exists(srcStripDllPath))
+            {
+                CopyStripDlls(srcStripDllPath, target);
+            }
+        }
+
+        public void OnPreprocessBuild(BuildReport report)
+        {
+            if (!Settings.Instance.enable)
+            {
+                Debug.Log($"[CopyStrippedAOTAssemblies] disabled");
+                return;
+            }
+            if (HybridCLRIntegration.Enabled)
+            {
+                Debug.Log($"[CopyStrippedAOTAssemblies] HybridCLR enabled, skip copy stripped dlls");
+                return;
+            }
+            BuildTarget target = report.summary.platform;
+            var dstPath = CommonPaths.GetManagedStrippedDuplicatePath(target);
+            DirectoryUtil.RecreateDir(dstPath);
+        }
+    }
+}

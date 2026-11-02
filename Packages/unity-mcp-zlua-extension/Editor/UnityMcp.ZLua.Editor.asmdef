@@ -1,0 +1,20 @@
+{
+  "name": "UnityMcp.ZLua.Editor",
+  "rootNamespace": "UnityMcp.ZLua.Editor",
+  "references": [
+    "UnityMcp.ZLua",
+    "UnityMcp.Runtime",
+    "UnityMcp.Editor"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

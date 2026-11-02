@@ -1,0 +1,20 @@
+{
+  "name": "unity-mcp",
+  "displayName": "Unity MCP",
+  "version": "0.1.0",
+  "unity": "2021.3",
+  "description": "MCP endpoints for Unity Editor, Play Mode, and players.",
+  "license": "MIT",
+  "keywords": [
+    "unity",
+    "mcp",
+    "automation"
+  ],
+  "dependencies": {
+    "com.unity.ugui": "1.0.0",
+    "com.unity.modules.imageconversion": "1.0.0",
+    "com.unity.modules.physics": "1.0.0",
+    "com.unity.modules.screencapture": "1.0.0",
+    "com.unity.modules.unitywebrequest": "1.0.0"
+  }
+}

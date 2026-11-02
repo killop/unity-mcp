@@ -1,0 +1,7 @@
+{
+  "name": "demo.editor.echo.lua",
+  "description": "Return the JSON arguments passed to this project Lua tool.",
+  "inputSchemaJson": "{\"type\":\"object\",\"additionalProperties\":true}",
+  "modulePath": "demo-echo.lua",
+  "functionName": "execute"
+}

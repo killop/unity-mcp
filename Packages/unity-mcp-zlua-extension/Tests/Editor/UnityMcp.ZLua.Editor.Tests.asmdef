@@ -1,0 +1,14 @@
+{
+  "name": "UnityMcp.ZLua.Editor.Tests",
+  "rootNamespace": "UnityMcp.ZLua.Tests",
+  "references": [
+    "UnityMcp.ZLua",
+    "UnityMcp.Runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}

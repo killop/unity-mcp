@@ -1,0 +1,259 @@
+// Copyright 2026 Code Philosophy
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+// ZLua migration helper for toLua projects.
+// Copy into your toLua project's Editor folder, then menu ZLua/ExportTypes.
+// Spec: docs/spec/12-MIGRATION-ADAPTORS.md
+//
+// export_name follows runtime registration: nameSpace.libName (e.g. UnityEngine.GameObject),
+// not Type.Name alone. SetNameSpace(null) → libName at root; SetLibName overrides libName.
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using UnityEditor;
+using UnityEngine;
+
+using BindType = ToLuaMenu.BindType;
+
+public static class ZLuaToLuaExportTypes
+{
+    public const string OutputRelativePath = "ZLua/tolua_export_types.lua";
+
+    private struct Entry : IComparable<Entry>
+    {
+        public string FullName;
+        public string ExportName;
+
+        public int CompareTo(Entry other)
+        {
+            int c = string.CompareOrdinal(FullName, other.FullName);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            return string.CompareOrdinal(ExportName, other.ExportName);
+        }
+    }
+
+    [MenuItem("ZLua/ExportTypes")]
+    public static void ExportTypes()
+    {
+        BindType[] list = CustomSettings.customTypeList;
+        if (list == null)
+        {
+            Debug.LogError("ZLua ExportTypes (toLua): CustomSettings.customTypeList is null.");
+            return;
+        }
+
+        int skipped = 0;
+        var byAssembly = new SortedDictionary<string, SortedSet<Entry>>(StringComparer.Ordinal);
+        foreach (BindType bind in list)
+        {
+            if (!TryAddBind(bind, byAssembly, out string reason))
+            {
+                skipped++;
+                if (!string.IsNullOrEmpty(reason))
+                {
+                    string describe = bind != null && bind.type != null
+                        ? (bind.type.FullName ?? bind.type.Name)
+                        : "<null>";
+                    Debug.LogWarning("ZLua ExportTypes (toLua): skip " + describe + " — " + reason);
+                }
+            }
+        }
+
+        string absPath = Path.Combine(Application.dataPath, OutputRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        WriteLuaModule(absPath, byAssembly);
+        AssetDatabase.Refresh();
+
+        int count = byAssembly.Sum(kv => kv.Value.Count);
+        Debug.Log(string.Format(
+            "ZLua ExportTypes (toLua): wrote {0} type(s) in {1} assembly(ies), skipped {2}.\n{3}",
+            count, byAssembly.Count, skipped, absPath));
+        if (!Application.isBatchMode)
+        {
+            EditorUtility.RevealInFinder(absPath);
+        }
+    }
+
+    static bool TryAddBind(BindType bind, SortedDictionary<string, SortedSet<Entry>> byAssembly, out string reason)
+    {
+        reason = null;
+        if (bind == null || bind.type == null)
+        {
+            reason = "null BindType";
+            return false;
+        }
+
+        Type type = bind.type;
+        if (type.IsGenericTypeDefinition)
+        {
+            reason = "open generic (not mounted by adaptor MVP)";
+            return false;
+        }
+
+        if (type.IsArray)
+        {
+            reason = "array type";
+            return false;
+        }
+
+        string fullName = type.FullName;
+        if (string.IsNullOrEmpty(fullName))
+        {
+            reason = "empty FullName";
+            return false;
+        }
+
+        if (fullName.IndexOf('[') >= 0)
+        {
+            reason = "FullName contains '[' (closed generic / special name)";
+            return false;
+        }
+
+        string asmName = type.Assembly.GetName().Name;
+        if (string.IsNullOrEmpty(asmName))
+        {
+            reason = "empty assembly name";
+            return false;
+        }
+
+        string exportName = BuildExportName(bind);
+        if (string.IsNullOrEmpty(exportName))
+        {
+            reason = "empty export_name";
+            return false;
+        }
+
+        SortedSet<Entry> set;
+        if (!byAssembly.TryGetValue(asmName, out set))
+        {
+            set = new SortedSet<Entry>();
+            byAssembly[asmName] = set;
+        }
+
+        set.Add(new Entry { FullName = fullName, ExportName = exportName });
+        return true;
+    }
+
+    /// <summary>
+    /// Mirrors toLua LuaBinder registration: BeginModule(nameSpace) + libName.
+    /// </summary>
+    static string BuildExportName(BindType bind)
+    {
+        string lib = bind.libName;
+        if (string.IsNullOrEmpty(lib))
+        {
+            lib = bind.type.Name;
+        }
+
+        if (string.IsNullOrEmpty(bind.nameSpace))
+        {
+            return lib;
+        }
+
+        return bind.nameSpace + "." + lib;
+    }
+
+    static void WriteLuaModule(string absPath, SortedDictionary<string, SortedSet<Entry>> byAssembly)
+    {
+        string dir = Path.GetDirectoryName(absPath);
+        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+
+        var sb = new StringBuilder(8 * 1024);
+        sb.AppendLine("-- Auto-generated by ZLua/ExportTypes (toLua).");
+        sb.AppendLine("-- " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        sb.AppendLine("-- Do not edit by hand; regenerate after changing CustomSettings.customTypeList.");
+        sb.AppendLine("return {");
+        sb.AppendLine("  types = {");
+
+        bool firstAsm = true;
+        foreach (KeyValuePair<string, SortedSet<Entry>> kv in byAssembly)
+        {
+            if (!firstAsm)
+            {
+                sb.AppendLine(",");
+            }
+
+            firstAsm = false;
+            sb.Append("    [");
+            sb.Append(LuaQuote(kv.Key));
+            sb.AppendLine("] = {");
+
+            bool firstType = true;
+            foreach (Entry e in kv.Value)
+            {
+                if (!firstType)
+                {
+                    sb.AppendLine(",");
+                }
+
+                firstType = false;
+                sb.Append("      { full_name = ");
+                sb.Append(LuaQuote(e.FullName));
+                if (!string.Equals(e.ExportName, e.FullName, StringComparison.Ordinal))
+                {
+                    sb.Append(", export_name = ");
+                    sb.Append(LuaQuote(e.ExportName));
+                }
+                sb.Append(" }");
+            }
+
+            if (kv.Value.Count > 0)
+            {
+                sb.AppendLine();
+            }
+
+            sb.Append("    }");
+        }
+
+        if (byAssembly.Count > 0)
+        {
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("  },");
+        sb.AppendLine("}");
+
+        File.WriteAllText(absPath, sb.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    static string LuaQuote(string s)
+    {
+        if (s == null)
+        {
+            s = "";
+        }
+
+        return "\"" + s
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("\r", "\\r")
+            .Replace("\n", "\\n")
+            + "\"";
+    }
+}
